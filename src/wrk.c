@@ -31,6 +31,9 @@ static struct {
     pthread_mutex_t mutex;
 } statistics;
 
+pthread_mutex_t record_mutex;
+FILE *file;
+
 static struct sock sock = {
     .connect  = sock_connect,
     .close    = sock_close,
@@ -105,6 +108,13 @@ int main(int argc, char **argv) {
 	
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT,  SIG_IGN);
+
+    file = fopen("record.log", "w");
+    if (file == NULL) {
+        perror("Error opening file");
+        return 1;
+    }
+    pthread_mutex_init(&record_mutex, NULL);
 
     pthread_mutex_init(&statistics.mutex, NULL);
     statistics.requests = stats_alloc(10);
@@ -244,6 +254,7 @@ int main(int argc, char **argv) {
         script_done(L, latency_stats, statistics.requests);
     }
 
+    fclose(file);
     return 0;
 }
 
@@ -556,6 +567,16 @@ static int response_complete(http_parser *parser) {
 
         uint64_t actual_latency_timing = now - c->actual_latency_start;
         hdr_record_value(thread->u_latency_histogram, actual_latency_timing);
+
+        // Request rate
+        uint64_t elapsed_ms = (thread->stop_at - thread->start) / 1000;
+        float req_per_sec = (thread->requests / (double) elapsed_ms) * 1000;
+
+        // Overlapping of threads is okay since latency is important
+        // pthread_mutex_lock(&record_mutex);
+        fprintf(file, "%ld;%f\n", expected_latency_timing, req_per_sec);
+        fflush(file);
+        // pthread_mutex_unlock(&record_mutex);
     }
 
 
